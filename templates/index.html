@@ -1,0 +1,1166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>NPU · Face Recognition</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden}
+:root{
+  --bg:#0e0e0e; --surface:#161616; --panel:#1c1c1c; --card:#222;
+  --border:#2e2e2e; --border2:#3d3d3d;
+  --text:#e4e4e4; --sub:#888; --muted:#444; --accent:#ccc;
+  --green:#4caf50; --green2:#81c784; --amber:#ffa726;
+  --red:#ef5350; --blue:#64b5f6; --white:#fff;
+  --mono:'IBM Plex Mono',monospace; --sans:'Inter',sans-serif; --r:6px;
+  --hh:46px; --sb:44px; --ss:44px; --th:36px;
+}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13px}
+
+/* ── HEADER ── */
+header{
+  position:fixed;top:0;left:0;right:0;height:var(--hh);z-index:100;
+  display:flex;align-items:center;gap:10px;padding:0 16px;
+  background:var(--surface);border-bottom:1px solid var(--border);
+}
+.logo{font-family:var(--mono);font-size:12px;font-weight:600;
+      color:var(--white);letter-spacing:.4px}
+.logo b{color:var(--sub)}
+.chip{font-family:var(--mono);font-size:9px;padding:2px 7px;border-radius:3px;
+      border:1px solid var(--border2);color:var(--sub);text-transform:uppercase}
+.chip.npu{border-color:var(--blue);color:var(--blue)}
+#hsp{flex:1}
+#live-dot{width:7px;height:7px;border-radius:50%;background:var(--muted);
+          transition:background .3s}
+#live-dot.on{background:var(--green);box-shadow:0 0 6px var(--green)}
+#live-lbl{font-family:var(--mono);font-size:10px;color:var(--sub)}
+
+/* ── SHELL — fixed, below header ── */
+.shell{
+  position:fixed;top:var(--hh);left:0;right:0;bottom:0;
+  display:grid;grid-template-columns:1fr 320px;
+}
+
+/* ── LEFT — 3-row grid ── */
+.left{
+  display:grid;
+  grid-template-rows:var(--sb) 1fr var(--ss);
+  overflow:hidden;
+  border-right:1px solid var(--border);
+}
+
+/* Stream bar */
+.sbar{
+  display:flex;align-items:center;gap:7px;padding:0 12px;
+  background:var(--surface);border-bottom:1px solid var(--border);
+  overflow:hidden;
+}
+.sbar input[type=text]{
+  flex:1;min-width:0;background:var(--bg);border:1px solid var(--border);
+  color:var(--text);font-family:var(--mono);font-size:10px;
+  padding:4px 9px;border-radius:var(--r);outline:none;
+}
+.sbar input:focus{border-color:var(--border2)}
+.sbar input::placeholder{color:var(--muted)}
+button{
+  cursor:pointer;font-family:var(--sans);font-weight:600;font-size:10px;
+  border:none;border-radius:var(--r);padding:4px 11px;
+  white-space:nowrap;transition:all .12s;flex-shrink:0;
+}
+.btn-go{background:var(--white);color:#000}
+.btn-go:hover{background:#d4d4d4}
+.btn-stop{background:transparent;border:1px solid var(--border2);color:var(--sub)}
+.btn-stop:hover{border-color:var(--red);color:var(--red)}
+.btn-sm{background:transparent;border:1px solid var(--border);
+        color:var(--muted);font-size:9px;padding:3px 8px}
+.btn-sm:hover{border-color:var(--border2);color:var(--sub)}
+.knob{display:flex;align-items:center;gap:4px;
+      font-family:var(--mono);font-size:9px;color:var(--muted);flex-shrink:0}
+.knob input[type=range]{width:58px;accent-color:var(--accent);cursor:pointer}
+.knob span{min-width:22px;text-align:right;color:var(--sub)}
+
+/* Video */
+.vwrap{
+  display:flex;align-items:center;justify-content:center;
+  background:var(--bg);overflow:hidden;position:relative;
+}
+.vwrap::before,.vwrap::after{
+  content:'';position:absolute;width:18px;height:18px;
+  border-color:var(--border2);border-style:solid;opacity:.5;pointer-events:none;
+}
+.vwrap::before{top:8px;left:8px;border-width:1px 0 0 1px}
+.vwrap::after{bottom:8px;right:8px;border-width:0 1px 1px 0}
+.vwrap img{max-width:100%;max-height:100%;object-fit:contain}
+.vph{display:flex;flex-direction:column;align-items:center;
+     gap:10px;color:var(--muted);text-align:center}
+.vph-icon{font-size:32px;opacity:.18}
+.vph p{font-size:11px;line-height:1.8}
+
+/* Stats strip */
+.sstrip{
+  display:flex;border-top:1px solid var(--border);background:var(--surface);
+}
+.sstat{flex:1;padding:5px 8px;border-right:1px solid var(--border);
+       display:flex;flex-direction:column;gap:1px;min-width:0}
+.sstat:last-child{border-right:none}
+.sv{font-family:var(--mono);font-size:14px;font-weight:600;line-height:1.1;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sl{font-size:7px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted)}
+.sv-g{color:var(--green2)}.sv-a{color:var(--amber)}
+.sv-r{color:var(--red)}.sv-b{color:var(--blue)}
+
+/* ── RIGHT — tabs + scrollable pane ── */
+.right{
+  display:grid;grid-template-rows:var(--th) 1fr;
+  background:var(--surface);overflow:hidden;
+}
+.tabs{display:flex;border-bottom:1px solid var(--border)}
+.tab{
+  flex:1;display:flex;align-items:center;justify-content:center;
+  font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;
+  color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;
+  transition:all .12s;padding:0 2px;
+}
+.tab.active{color:var(--text);border-bottom-color:var(--accent)}
+.tab .badge{
+  margin-left:4px;background:var(--card);color:var(--sub);
+  font-size:8px;padding:1px 5px;border-radius:8px;
+  font-family:var(--mono);
+}
+.tab.active .badge{background:var(--accent);color:#000}
+
+.pane{overflow-y:auto;overflow-x:hidden;padding:12px;min-height:0}
+.pane::-webkit-scrollbar{width:3px}
+.pane::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.sec{font-family:var(--mono);font-size:8px;letter-spacing:.8px;
+     text-transform:uppercase;color:var(--muted);margin-bottom:9px}
+.empty{text-align:center;color:var(--muted);font-size:11px;padding:28px 0}
+
+/* ── LIVE FACE GRID ── */
+.face-grid{
+  display:grid;
+  grid-template-columns:repeat(2, 1fr);
+  gap:8px;
+}
+.face-card{
+  background:var(--panel);border:1px solid var(--border);
+  border-radius:var(--r);overflow:hidden;cursor:pointer;
+  transition:border-color .15s;
+}
+.face-card:hover{border-color:var(--border2)}
+.face-card.known{border-left:2px solid var(--green)}
+.face-card.unknown{border-left:2px solid var(--red)}
+.face-img-wrap{
+  width:100%;
+  /* fixed aspect 1:1 so cards never change height */
+  padding-top:100%;
+  position:relative;overflow:hidden;
+  background:var(--card);
+}
+.face-img-wrap img{
+  position:absolute;top:0;left:0;
+  width:100%;height:100%;object-fit:cover;
+}
+.face-meta{padding:5px 7px}
+.face-name{
+  font-weight:600;font-size:11px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.face-name.k{color:var(--green2)}
+.face-name.u{color:var(--red)}
+.face-sub{
+  font-family:var(--mono);font-size:8px;color:var(--muted);margin-top:1px;
+  display:flex;justify-content:space-between;
+}
+.face-conf{color:var(--amber)}
+
+/* ── LOG ROWS ── */
+.logrow{
+  display:flex;align-items:center;gap:7px;padding:6px 4px;
+  border-bottom:1px solid var(--border);cursor:pointer;
+  border-radius:4px;transition:background .1s;
+}
+.logrow:last-child{border-bottom:none}
+.logrow:hover{background:var(--panel)}
+.lthumb{width:32px;height:32px;border-radius:3px;object-fit:cover;
+        flex-shrink:0;border:1px solid var(--border);background:var(--card)}
+.lbody{flex:1;min-width:0}
+.lname{font-weight:600;font-size:10px;
+       overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lname.k{color:var(--green2)}.lname.u{color:var(--red)}
+.lmeta{font-family:var(--mono);font-size:8px;color:var(--muted);margin-top:1px}
+.lconf{font-family:var(--mono);font-size:10px;color:var(--amber);flex-shrink:0}
+.larr{font-size:9px;color:var(--muted);flex-shrink:0}
+
+/* ── ENROLL FORM ── */
+.fg{margin-bottom:11px}
+.fg label{display:block;font-size:8px;color:var(--sub);margin-bottom:3px;
+          text-transform:uppercase;letter-spacing:.5px;font-family:var(--mono)}
+.fg input{
+  width:100%;background:var(--bg);border:1px solid var(--border);
+  color:var(--text);font-family:var(--sans);font-size:12px;
+  padding:5px 9px;border-radius:var(--r);outline:none;
+}
+.fg input:focus{border-color:var(--border2)}
+.dropzone{
+  border:1px dashed var(--border);border-radius:var(--r);padding:16px;
+  text-align:center;cursor:pointer;color:var(--muted);font-size:11px;
+  transition:all .18s;
+}
+.dropzone:hover,.dropzone.drag{border-color:var(--border2);
+  background:rgba(255,255,255,.015)}
+.dropzone .di{font-size:20px;opacity:.2;margin-bottom:4px}
+.prevgrid{display:flex;flex-wrap:wrap;gap:4px;margin-top:7px}
+.prevgrid img{width:42px;height:42px;object-fit:cover;
+              border-radius:3px;border:1px solid var(--border)}
+.btn-enroll{
+  width:100%;padding:7px;background:var(--white);color:#000;
+  font-weight:700;font-size:11px;border-radius:var(--r);
+  border:none;cursor:pointer;transition:.12s;
+}
+.btn-enroll:hover{background:#d8d8d8}
+
+/* ── KNOWN PERSONS LIST ── */
+.person{background:var(--panel);border:1px solid var(--border);
+        border-radius:var(--r);padding:7px 9px;margin-bottom:5px}
+.ptop{display:flex;align-items:center;gap:7px}
+.pdot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.pname{font-weight:600;font-size:11px;flex:1;
+       overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pcnt{font-family:var(--mono);font-size:8px;color:var(--muted);flex-shrink:0}
+.pdel{background:transparent;border:none;color:var(--muted);
+      cursor:pointer;font-size:12px;padding:0 2px;transition:.12s;flex-shrink:0}
+.pdel:hover{color:var(--red)}
+.pbarw{margin-top:5px;background:var(--border);border-radius:2px;height:2px}
+.pbar{height:2px;border-radius:2px;transition:width .3s}
+
+/* ── LABEL TAB ── */
+.batch-bar{display:flex;gap:5px;margin-bottom:10px}
+.batch-bar input{
+  flex:1;background:var(--bg);border:1px solid var(--border);
+  color:var(--text);font-size:11px;padding:5px 8px;
+  border-radius:var(--r);outline:none;
+}
+.batch-bar input:focus{border-color:var(--border2)}
+.btn-batch{background:var(--white);color:#000;font-size:10px;
+           font-weight:700;padding:5px 10px;border-radius:var(--r);
+           border:none;cursor:pointer;flex-shrink:0}
+.btn-batch:hover{background:#d4d4d4}
+.ucard{background:var(--panel);border:1px solid var(--border);
+       border-radius:var(--r);padding:7px;margin-bottom:7px}
+.ucard-img{width:100%;height:90px;object-fit:cover;border-radius:4px;
+           border:1px solid var(--border);background:var(--card);display:block}
+.umeta{font-family:var(--mono);font-size:8px;color:var(--muted);margin:4px 0 5px}
+.urow{display:flex;gap:5px}
+.urow input{flex:1;background:var(--bg);border:1px solid var(--border);
+            color:var(--text);font-size:10px;padding:4px 7px;
+            border-radius:var(--r);outline:none;min-width:0}
+.urow input:focus{border-color:var(--border2)}
+.btn-lbl{background:var(--white);color:#000;font-size:9px;
+         font-weight:700;padding:4px 8px;border-radius:var(--r);
+         border:none;cursor:pointer;flex-shrink:0}
+.btn-lbl:hover{background:#d4d4d4}
+
+/* ── POPUP MODAL ── */
+.overlay{
+  display:none;position:fixed;inset:0;z-index:200;
+  background:rgba(0,0,0,.72);backdrop-filter:blur(3px);
+  align-items:center;justify-content:center;
+}
+.overlay.open{display:flex}
+.modal{
+  background:var(--panel);border:1px solid var(--border2);border-radius:10px;
+  width:300px;max-width:92vw;
+  box-shadow:0 20px 50px rgba(0,0,0,.6);
+  overflow:hidden;animation:pop .15s ease;
+}
+@keyframes pop{from{transform:scale(.9);opacity:0}to{transform:scale(1);opacity:1}}
+.mhead{display:flex;align-items:center;gap:10px;
+       padding:12px 14px;border-bottom:1px solid var(--border)}
+.mface{width:56px;height:56px;border-radius:6px;object-fit:cover;
+       border:1px solid var(--border2);flex-shrink:0;background:var(--card)}
+.mtitle{font-size:14px;font-weight:700;flex:1;
+        overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mtitle.k{color:var(--green2)}.mtitle.u{color:var(--red)}
+.mclose{background:transparent;border:none;color:var(--sub);
+        font-size:16px;cursor:pointer;padding:2px 5px;transition:.12s}
+.mclose:hover{color:var(--text)}
+.mbody{padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+.mrow{display:flex;justify-content:space-between;align-items:center}
+.mlbl{font-family:var(--mono);font-size:8px;color:var(--sub)}
+.mval{font-family:var(--mono);font-size:10px;font-weight:600}
+.mval.k{color:var(--green2)}.mval.u{color:var(--red)}
+.cbar-wrap{background:var(--border);border-radius:3px;height:3px;overflow:hidden}
+.cbar{height:3px;border-radius:3px;transition:width .4s}
+.mfoot{padding:9px 14px;border-top:1px solid var(--border);display:flex;gap:6px}
+.menroll-in{flex:1;background:var(--bg);border:1px solid var(--border);
+            color:var(--text);font-size:11px;padding:5px 8px;
+            border-radius:var(--r);outline:none;min-width:0}
+.menroll-in:focus{border-color:var(--border2)}
+.menroll-btn{background:var(--white);color:#000;font-size:10px;
+             font-weight:700;padding:5px 10px;border-radius:var(--r);
+             border:none;cursor:pointer;flex-shrink:0}
+.menroll-btn:hover{background:#d4d4d4}
+.mdismiss{width:100%;padding:6px;background:transparent;
+          border:1px solid var(--border);color:var(--sub);
+          font-size:10px;border-radius:var(--r);cursor:pointer}
+.mdismiss:hover{border-color:var(--border2);color:var(--text)}
+
+/* ── TOAST ── */
+#toast{
+  position:fixed;bottom:16px;left:50%;
+  transform:translateX(-50%) translateY(50px);
+  background:var(--card);border:1px solid var(--border2);
+  color:var(--text);font-size:10px;font-family:var(--mono);
+  padding:6px 15px;border-radius:5px;z-index:999;
+  transition:transform .22s;white-space:nowrap;
+}
+#toast.show{transform:translateX(-50%) translateY(0)}
+#toast.ok{border-color:var(--green);color:var(--green2)}
+#toast.err{border-color:var(--red);color:var(--red)}
+
+/* ── PULSE RINGS ── */
+@keyframes pulseRing {
+  0%  {transform:translate(-50%,-50%) scale(0.6);opacity:.7}
+  100%{transform:translate(-50%,-50%) scale(2.4);opacity:0}
+}
+.pulse-ring{
+  position:absolute;top:50%;left:50%;
+  width:100px;height:100px;border-radius:50%;
+  border:2px solid currentColor;
+  transform:translate(-50%,-50%) scale(0.6);
+  opacity:0;pointer-events:none;
+}
+#pr1{animation:pulseRing 1.6s ease-out infinite}
+#pr2{animation:pulseRing 1.6s ease-out .5s infinite}
+
+/* detect card row fix */
+#detect-card{display:none}
+#detect-card.visible{display:flex}
+
+/* ── CLUSTER CARD ── */
+.clu-card{
+  background:var(--panel);border:1px solid var(--border);
+  border-radius:var(--r);padding:8px;margin-bottom:8px;
+  display:flex;gap:10px;align-items:center;
+}
+.clu-thumb{
+  width:64px;height:64px;border-radius:5px;object-fit:cover;
+  border:1px solid var(--border);background:var(--card);flex-shrink:0;
+}
+.clu-info{flex:1;min-width:0}
+.clu-id{font-family:var(--mono);font-size:8px;color:var(--muted)}
+.clu-cnt{font-size:11px;font-weight:600;color:var(--amber);margin:2px 0}
+.clu-lbl-row{display:flex;gap:5px;margin-top:5px}
+.clu-lbl-row input{
+  flex:1;background:var(--bg);border:1px solid var(--border);
+  color:var(--text);font-size:10px;padding:3px 7px;
+  border-radius:var(--r);outline:none;min-width:0;
+}
+.clu-lbl-row input:focus{border-color:var(--border2)}
+.btn-clu{background:var(--white);color:#000;font-size:9px;
+         font-weight:700;padding:3px 8px;border-radius:var(--r);
+         border:none;cursor:pointer;flex-shrink:0}
+.btn-clu:hover{background:#d4d4d4}
+.clu-members{
+  display:flex;flex-wrap:wrap;gap:3px;margin-top:6px;
+}
+.clu-members img{
+  width:32px;height:32px;object-fit:cover;border-radius:3px;
+  border:1px solid var(--border);background:var(--card);
+}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header>
+  <div class="logo">NPU<b>·</b>Vision</div>
+  <div class="chip npu">TIM-VX</div>
+  <div class="chip" id="backend-chip">NPU+CPU</div>
+</header>
+
+<!-- SHELL -->
+<div class="shell">
+
+  <!-- ───── LEFT ───── -->
+  <div class="left">
+    <!-- Detection Controls bar -->
+    <div class="sbar">
+      <input type="text" id="rtsp-in"
+        placeholder="rtsp://user:pass@192.168.x.x:554/stream  (blank = webcam)"
+        style="flex:1;min-width:0;background:var(--bg);border:1px solid var(--border);
+               color:var(--text);font-family:var(--mono);font-size:10px;
+               padding:4px 9px;border-radius:var(--r);outline:none"/>
+      <button class="btn-go"   onclick="startStream()">▶ Start</button>
+      <button class="btn-stop" onclick="stopStream()">■ Stop</button>
+      <div class="knob">
+        Tol
+        <input type="range" id="tol" min="20" max="80" value="50"
+               oninput="setTol(this.value)"/>
+        <span id="tol-v">0.50</span>
+      </div>
+      <div class="knob">
+        N
+        <input type="range" id="rev" min="1" max="8" value="3"
+               oninput="setRev(this.value)"/>
+        <span id="rev-v">3</span>
+      </div>
+      <button class="btn-sm" onclick="resetStats()">↺ Stats</button>
+      <div id="hsp" style="flex:1"></div>
+      <div id="live-dot" style="width:7px;height:7px;border-radius:50%;background:var(--muted);transition:background .3s;flex-shrink:0"></div>
+      <div id="live-lbl" style="font-family:var(--mono);font-size:10px;color:var(--sub);margin-left:5px">OFFLINE</div>
+    </div>
+
+    <!-- Notification / detection panel — replaces the video feed -->
+    <div class="vwrap" id="detect-panel">
+      <!-- Idle state -->
+      <div class="vph" id="detect-idle">
+        <div class="vph-icon">🔍</div>
+        <p>Camera not started<br/>Click <strong>Start Camera</strong> to begin</p>
+      </div>
+
+      <!-- Last detection card — shown when a face is detected -->
+      <div id="detect-card" style="display:none;width:100%;height:100%;
+           display:none;flex-direction:column;align-items:center;justify-content:center;
+           padding:20px;gap:16px">
+
+        <!-- Big face image -->
+        <div id="det-img-wrap" style="
+          width:160px;height:160px;border-radius:12px;overflow:hidden;
+          border:3px solid var(--border2);background:var(--card);flex-shrink:0;
+          position:relative;">
+          <img id="det-face-img" src="" alt=""
+               style="width:100%;height:100%;object-fit:cover"/>
+          <div id="det-auth-badge" style="
+            position:absolute;bottom:6px;right:6px;
+            font-size:9px;font-weight:700;padding:2px 7px;border-radius:4px;
+            font-family:var(--mono);letter-spacing:.4px;
+            background:rgba(0,0,0,.65)">—</div>
+        </div>
+
+        <!-- Name + status -->
+        <div style="text-align:center">
+          <div id="det-name"
+               style="font-size:22px;font-weight:700;line-height:1.2;
+                      overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+                      max-width:260px"></div>
+          <div id="det-status"
+               style="font-family:var(--mono);font-size:10px;margin-top:4px;
+                      letter-spacing:.5px"></div>
+        </div>
+
+        <!-- Confidence bar -->
+        <div style="width:220px">
+          <div style="display:flex;justify-content:space-between;
+                      font-family:var(--mono);font-size:9px;color:var(--muted);
+                      margin-bottom:4px">
+            <span>Confidence</span>
+            <span id="det-conf-lbl">—</span>
+          </div>
+          <div style="background:var(--border);border-radius:4px;height:6px;overflow:hidden">
+            <div id="det-conf-bar"
+                 style="height:6px;border-radius:4px;width:0%;transition:width .4s,background .4s"></div>
+          </div>
+        </div>
+
+        <!-- Time -->
+        <div id="det-time"
+             style="font-family:var(--mono);font-size:9px;color:var(--muted)"></div>
+
+        <!-- Enroll button (only for unknown) -->
+        <div id="det-enroll-row" style="display:none;gap:6px;width:220px">
+          <input id="det-enroll-name" type="text" placeholder="Enter name to enroll…"
+                 style="flex:1;background:var(--bg);border:1px solid var(--border);
+                        color:var(--text);font-size:11px;padding:5px 8px;
+                        border-radius:var(--r);outline:none;min-width:0"/>
+          <button class="btn-enroll" style="width:auto;padding:5px 12px;font-size:10px"
+                  onclick="enrollFromDetect()">Enroll</button>
+        </div>
+      </div>
+
+      <!-- Animated pulse rings for "detected" state -->
+      <div id="det-pulse" style="display:none;position:absolute;inset:0;
+           pointer-events:none;overflow:hidden">
+        <div class="pulse-ring" id="pr1"></div>
+        <div class="pulse-ring" id="pr2"></div>
+      </div>
+    </div>
+
+    <!-- Stats strip -->
+    <div class="sstrip">
+      <div class="sstat"><div class="sv sv-b" id="s-fps">0</div><div class="sl">FPS</div></div>
+      <div class="sstat"><div class="sv sv-a" id="s-det">0ms</div><div class="sl">Det</div></div>
+      <div class="sstat"><div class="sv sv-b" id="s-rec">0ms</div><div class="sl">Rec</div></div>
+      <div class="sstat"><div class="sv sv-g" id="s-kn">0</div><div class="sl">Known</div></div>
+      <div class="sstat"><div class="sv sv-r" id="s-un">0</div><div class="sl">Unknown</div></div>
+      <div class="sstat"><div class="sv sv-a" id="s-mb">0</div><div class="sl">MB RAM</div></div>
+    </div>
+  </div>
+
+  <!-- ───── RIGHT ───── -->
+  <div class="right">
+    <div class="tabs">
+      <div class="tab active" onclick="tab('known-live')">
+        Known <span class="badge" id="badge-known">0</span>
+      </div>
+      <div class="tab" onclick="tab('unknown-live')">
+        Unknown <span class="badge" id="badge-unknown">0</span>
+      </div>
+      <div class="tab" onclick="tab('log')">Log</div>
+      <div class="tab" onclick="tab('enroll')">Enroll</div>
+      <div class="tab" onclick="tab('clusters')">
+        Clusters <span class="badge" id="badge-clusters">0</span>
+      </div>
+      <div class="tab" onclick="tab('label')">Label</div>
+    </div>
+
+    <!-- LIVE KNOWN FACES -->
+    <div class="pane" id="pane-known-live">
+      <div class="sec">Recognized persons — live</div>
+      <div class="face-grid" id="known-grid">
+        <div class="empty" style="grid-column:1/-1">
+          No recognized faces yet
+        </div>
+      </div>
+    </div>
+
+    <!-- LIVE UNKNOWN FACES -->
+    <div class="pane" id="pane-unknown-live" style="display:none">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:9px">
+        <div class="sec" style="margin-bottom:0">Unknown faces — live</div>
+        <button class="btn-sm" onclick="clearUnknown()">Clear</button>
+      </div>
+      <div class="face-grid" id="unknown-grid">
+        <div class="empty" style="grid-column:1/-1">
+          No unknown faces detected yet
+        </div>
+      </div>
+    </div>
+
+    <!-- LOG -->
+    <div class="pane" id="pane-log" style="display:none">
+      <div class="sec">Recognition log (IST) — click for details</div>
+      <div id="log-list"><div class="empty">No events yet</div></div>
+    </div>
+
+    <!-- ENROLL -->
+    <div class="pane" id="pane-enroll" style="display:none">
+      <div class="sec">Register new person</div>
+      <div class="fg">
+        <label>Full name</label>
+        <input type="text" id="add-name" placeholder="e.g. Rahul Sharma"/>
+      </div>
+      <div class="fg">
+        <label>Photos — multiple angles = better accuracy</label>
+        <div class="dropzone" id="dropzone"
+             onclick="document.getElementById('fi').click()"
+             ondragover="event.preventDefault();this.classList.add('drag')"
+             ondragleave="this.classList.remove('drag')"
+             ondrop="onDrop(event)">
+          <div class="di">🖼</div>
+          <div>Click or drag photos here</div>
+        </div>
+        <input id="fi" type="file" accept="image/*" multiple style="display:none"
+               onchange="previewFiles(this.files)"/>
+        <div class="prevgrid" id="prevgrid"></div>
+      </div>
+      <button class="btn-enroll" onclick="addFace()">＋ Add to Database</button>
+
+      <div style="margin-top:18px">
+        <div class="sec">Enrolled persons</div>
+        <div id="known-list"><div class="empty">No persons enrolled yet</div></div>
+      </div>
+    </div>
+
+    <!-- LABEL -->
+    <div class="pane" id="pane-label" style="display:none">
+      <div class="sec">Label unknown faces</div>
+      <div class="batch-bar">
+        <input type="text" id="batch-name" placeholder="Name for ALL unlabeled…"/>
+        <button class="btn-batch" onclick="labelAll()">Label ALL</button>
+      </div>
+      <div id="label-list"><div class="empty">No unknown faces captured</div></div>
+    </div>
+
+    <!-- CLUSTERS -->
+    <div class="pane" id="pane-clusters" style="display:none">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:9px">
+        <div class="sec" style="margin-bottom:0">Similar face clusters — label a whole group at once</div>
+        <button class="btn-sm" onclick="loadClusters()">↺</button>
+      </div>
+      <div id="cluster-list"><div class="empty">No clusters yet</div></div>
+    </div>
+
+  </div><!-- /right -->
+</div><!-- /shell -->
+
+<!-- LOG POPUP -->
+<div class="overlay" id="log-modal" onclick="closeModal(event)">
+  <div class="modal">
+    <div class="mhead">
+      <img class="mface" id="modal-face" src="" alt=""/>
+      <div class="mtitle" id="modal-name"></div>
+      <button class="mclose" onclick="closeModalDirect()">✕</button>
+    </div>
+    <div class="mbody">
+      <div class="mrow">
+        <span class="mlbl">Status</span>
+        <span class="mval" id="modal-status"></span>
+      </div>
+      <div class="mrow">
+        <span class="mlbl">Confidence</span>
+        <span class="mval" id="modal-conf"></span>
+      </div>
+      <div class="cbar-wrap">
+        <div class="cbar" id="modal-bar"></div>
+      </div>
+      <div class="mrow">
+        <span class="mlbl">Time (IST)</span>
+        <span class="mval" id="modal-time" style="color:var(--sub)"></span>
+      </div>
+      <div class="mrow" id="mfid-row" style="display:none">
+        <span class="mlbl">Face ID</span>
+        <span class="mval" id="modal-fid" style="color:var(--muted)"></span>
+      </div>
+    </div>
+    <div class="mfoot" id="mfoot-enroll" style="display:none">
+      <input class="menroll-in" type="text" id="modal-enroll-name"
+             placeholder="Enter name to enroll…"/>
+      <button class="menroll-btn" onclick="enrollFromModal()">Enroll</button>
+    </div>
+    <div class="mfoot" id="mfoot-dismiss">
+      <button class="mdismiss" onclick="closeModalDirect()">Dismiss</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+let selFiles = [];
+let curTab   = 'known-live';
+let logCache = [];
+let modalFid = null;
+let lastDetLid = null;   // track last shown detection to avoid repeat popups
+
+// ── Tabs ───────────────────────────────────────────────────
+const ALL_TABS = ['known-live','unknown-live','log','enroll','clusters','label'];
+function tab(name) {
+  curTab = name;
+  ALL_TABS.forEach((t,i) => {
+    document.getElementById('pane-'+t).style.display = t===name?'block':'none';
+    document.querySelectorAll('.tab')[i].classList.toggle('active', t===name);
+  });
+  if(name==='clusters') loadClusters();
+}
+
+// ── Stream ────────────────────────────────────────────────
+function startStream() {
+  const src = document.getElementById('rtsp-in').value.trim();
+  fetch('/api/start_stream',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({source:src})}).then(r=>r.json()).then(d=>{
+    if(d.ok){
+      document.getElementById('detect-idle').style.display='none';
+      toast('Stream started — face detection active','ok');
+    } else toast(d.msg,'err');
+  });
+}
+function stopStream(){
+  fetch('/api/stop_stream',{method:'POST'}).then(()=>{
+    document.getElementById('detect-idle').style.display='flex';
+    document.getElementById('detect-card').classList.remove('visible');
+    document.getElementById('det-pulse').style.display='none';
+    toast('Camera stopped');
+  });
+}
+function setTol(v){
+  const val=(v/100).toFixed(2);
+  document.getElementById('tol-v').textContent=val;
+  fetch('/api/set_tolerance',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({value:parseFloat(val)})});
+}
+function setRev(v){
+  document.getElementById('rev-v').textContent=v;
+  fetch('/api/set_recog_every',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({value:parseInt(v)})});
+}
+function resetStats(){
+  fetch('/api/reset_stats',{method:'POST'}).then(()=>toast('Stats reset'));
+}
+function clearUnknown(){
+  fetch('/api/clear_live_unknown',{method:'POST'}).then(()=>{
+    document.getElementById('unknown-grid').innerHTML=
+      '<div class="empty" style="grid-column:1/-1">Cleared</div>';
+    document.getElementById('badge-unknown').textContent='0';
+    toast('Unknown faces cleared');
+  });
+}
+
+// ── File drop ─────────────────────────────────────────────
+function onDrop(e){
+  e.preventDefault();
+  document.getElementById('dropzone').classList.remove('drag');
+  previewFiles(e.dataTransfer.files);
+}
+function previewFiles(files){
+  selFiles=Array.from(files);
+  const g=document.getElementById('prevgrid');
+  g.innerHTML='';
+  selFiles.forEach(f=>{
+    const img=document.createElement('img');
+    img.src=URL.createObjectURL(f);
+    g.appendChild(img);
+  });
+}
+function addFace(){
+  const name=document.getElementById('add-name').value.trim();
+  if(!name){toast('Enter a name','err');return}
+  if(!selFiles.length){toast('Upload at least one photo','err');return}
+  const fd=new FormData();
+  fd.append('name',name);
+  selFiles.forEach(f=>fd.append('images',f));
+  fetch('/api/add_known_face',{method:'POST',body:fd}).then(r=>r.json()).then(d=>{
+    toast(d.msg,d.ok?'ok':'err');
+    if(d.ok){
+      document.getElementById('add-name').value='';
+      document.getElementById('prevgrid').innerHTML='';
+      selFiles=[];
+    }
+  });
+}
+function deletePerson(name){
+  if(!confirm(`Delete all data for "${name}"?`)) return;
+  fetch('/api/delete_person',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name})}).then(r=>r.json()).then(d=>toast(d.msg,d.ok?'ok':'err'));
+}
+
+// ── Label ─────────────────────────────────────────────────
+function labelFace(fid){
+  const name=document.getElementById('ln-'+fid).value.trim();
+  if(!name){toast('Enter a name','err');return}
+  fetch('/api/label_unknown',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({fid,name})}).then(r=>r.json()).then(d=>{
+    toast(d.msg,d.ok?'ok':'err');
+    if(d.ok){
+      document.getElementById('uc-'+fid)?.remove();
+      const list=document.getElementById('label-list');
+      if(!list.querySelector('.ucard'))
+        list.innerHTML='<div class="empty">All labeled ✓</div>';
+    }
+  });
+}
+function labelAll(){
+  const name=document.getElementById('batch-name').value.trim();
+  if(!name){toast('Enter a name first','err');return}
+  if(!confirm(`Label ALL unlabeled faces as "${name}"?`)) return;
+  fetch('/api/label_all_unknown',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name,augment:true})}).then(r=>r.json()).then(d=>{
+    toast(d.msg,d.ok?'ok':'err');
+    if(d.ok){
+      document.getElementById('label-list').innerHTML='<div class="empty">All labeled ✓</div>';
+      document.getElementById('batch-name').value='';
+    }
+  });
+}
+
+// ── Log popup ─────────────────────────────────────────────
+function openLogModal(idx, lid){
+  const e=logCache[idx]; if(!e) return;
+  const isUnk=e.name==='Unknown';
+  modalFid=e.fid||null;
+  document.getElementById('modal-face').src='/api/log_thumb/'+lid+'?t='+Date.now();
+  const nel=document.getElementById('modal-name');
+  nel.textContent=e.name; nel.className='mtitle '+(isUnk?'u':'k');
+  const sel=document.getElementById('modal-status');
+  sel.textContent=isUnk?'Unknown person':'Recognized';
+  sel.className='mval '+(isUnk?'u':'k');
+  const conf=Math.round(e.confidence*100);
+  document.getElementById('modal-conf').textContent=conf+'%';
+  const bar=document.getElementById('modal-bar');
+  bar.style.width=conf+'%';
+  bar.style.background=conf>=70?'var(--green)':conf>=45?'var(--amber)':'var(--red)';
+  document.getElementById('modal-time').textContent=e.time;
+  const fr=document.getElementById('mfid-row');
+  if(modalFid){fr.style.display='flex';document.getElementById('modal-fid').textContent=modalFid;}
+  else fr.style.display='none';
+  document.getElementById('mfoot-enroll').style.display=isUnk&&modalFid?'flex':'none';
+  document.getElementById('mfoot-dismiss').style.display=isUnk&&modalFid?'none':'flex';
+  document.getElementById('modal-enroll-name').value='';
+  document.getElementById('log-modal').classList.add('open');
+}
+function closeModal(e){if(e.target===document.getElementById('log-modal'))closeModalDirect()}
+function closeModalDirect(){
+  document.getElementById('log-modal').classList.remove('open');
+  modalFid=null;
+}
+function enrollFromModal(){
+  if(!modalFid) return;
+  const name=document.getElementById('modal-enroll-name').value.trim();
+  if(!name){toast('Enter a name','err');return}
+  fetch('/api/label_unknown',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({fid:modalFid,name})}).then(r=>r.json()).then(d=>{
+    toast(d.msg,d.ok?'ok':'err');
+    if(d.ok) closeModalDirect();
+  });
+}
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModalDirect()});
+
+// ── Also open popup from face card click ──────────────────
+function openFaceCard(lid, name, conf, time, fid){
+  const isUnk = name==='Unknown';
+  modalFid = fid||null;
+  document.getElementById('modal-face').src='/api/log_thumb/'+lid+'?t='+Date.now();
+  const nel=document.getElementById('modal-name');
+  nel.textContent=name; nel.className='mtitle '+(isUnk?'u':'k');
+  const sel=document.getElementById('modal-status');
+  sel.textContent=isUnk?'Unknown person':'Recognized';
+  sel.className='mval '+(isUnk?'u':'k');
+  const pct=Math.round(conf*100);
+  document.getElementById('modal-conf').textContent=pct+'%';
+  const bar=document.getElementById('modal-bar');
+  bar.style.width=pct+'%';
+  bar.style.background=pct>=70?'var(--green)':pct>=45?'var(--amber)':'var(--red)';
+  document.getElementById('modal-time').textContent=time;
+  const fr=document.getElementById('mfid-row');
+  if(fid){fr.style.display='flex';document.getElementById('modal-fid').textContent=fid;}
+  else fr.style.display='none';
+  document.getElementById('mfoot-enroll').style.display=isUnk&&fid?'flex':'none';
+  document.getElementById('mfoot-dismiss').style.display=isUnk&&fid?'none':'flex';
+  document.getElementById('modal-enroll-name').value='';
+  document.getElementById('log-modal').classList.add('open');
+}
+
+// ── POLL ──────────────────────────────────────────────────
+function poll(){
+  fetch('/api/status').then(r=>r.json()).then(d=>{
+    // Header status
+    const dot=document.getElementById('live-dot');
+    if(d.stream){dot.style.background='var(--green)';dot.style.boxShadow='0 0 6px var(--green)';document.getElementById('live-lbl').textContent='LIVE';}
+    else{dot.style.background='var(--muted)';dot.style.boxShadow='none';document.getElementById('live-lbl').textContent='OFFLINE';}
+
+    // Stats
+    document.getElementById('s-fps').textContent=d.stats.fps||0;
+    document.getElementById('s-det').textContent=(d.stats.det_ms||0)+'ms';
+    document.getElementById('s-rec').textContent=(d.stats.recog_ms||0)+'ms';
+    document.getElementById('s-kn').textContent=d.stats.known_hits||0;
+    document.getElementById('s-un').textContent=d.stats.unknowns||0;
+    document.getElementById('s-mb').textContent=d.stats.mem_mb||0;
+
+    logCache=d.log||[];
+
+    // Live known grid
+    if(curTab==='known-live'){
+      fetch('/api/live_known').then(r=>r.json()).then(lk=>{
+        const grid=document.getElementById('known-grid');
+        document.getElementById('badge-known').textContent=lk.cards.length;
+        if(!lk.cards.length){
+          grid.innerHTML='<div class="empty" style="grid-column:1/-1">No recognized faces yet</div>';
+          return;
+        }
+        // Update or insert cards — don't rebuild entire grid (avoids image flicker)
+        const existingIds=new Set([...grid.querySelectorAll('.face-card')].map(c=>c.dataset.id));
+        lk.cards.forEach(c=>{
+          const cardId='k-'+c.name.replace(/\s+/g,'_');
+          let card=document.getElementById(cardId);
+          const conf=Math.round(c.conf*100);
+          if(!card){
+            card=document.createElement('div');
+            card.className='face-card known';
+            card.id=cardId;
+            card.dataset.id=cardId;
+            card.innerHTML=`
+              <div class="face-img-wrap">
+                <img src="/api/log_thumb/${c.lid}" loading="lazy"
+                     onerror="this.style.opacity='.3'"/>
+              </div>
+              <div class="face-meta">
+                <div class="face-name k">${c.name}</div>
+                <div class="face-sub">
+                  <span>${c.time}</span>
+                  <span class="face-conf">${conf}%</span>
+                </div>
+              </div>`;
+            card.onclick=()=>openFaceCard(c.lid,c.name,c.conf,c.time,null);
+            grid.appendChild(card);
+          } else {
+            // Update conf + time without reloading image
+            card.querySelector('.face-sub').innerHTML=
+              `<span>${c.time}</span><span class="face-conf">${conf}%</span>`;
+          }
+        });
+        // Remove cards for persons no longer in live store
+        const liveNames=new Set(lk.cards.map(c=>'k-'+c.name.replace(/\s+/g,'_')));
+        grid.querySelectorAll('.face-card').forEach(c=>{
+          if(!liveNames.has(c.id)) c.remove();
+        });
+      });
+    }
+
+    // Live unknown grid
+    if(curTab==='unknown-live'){
+      fetch('/api/live_unknown').then(r=>r.json()).then(lu=>{
+        const grid=document.getElementById('unknown-grid');
+        document.getElementById('badge-unknown').textContent=lu.cards.length;
+        if(!lu.cards.length){
+          grid.innerHTML='<div class="empty" style="grid-column:1/-1">No unknown faces detected yet</div>';
+          return;
+        }
+        lu.cards.forEach(c=>{
+          const cardId='u-'+c.fid;
+          if(!document.getElementById(cardId)){
+            const card=document.createElement('div');
+            card.className='face-card unknown';
+            card.id=cardId;
+            const conf=Math.round(c.conf*100);
+            card.innerHTML=`
+              <div class="face-img-wrap">
+                <img src="/api/log_thumb/${c.lid}" loading="lazy"
+                     onerror="this.style.opacity='.3'"/>
+              </div>
+              <div class="face-meta">
+                <div class="face-name u">Unknown</div>
+                <div class="face-sub">
+                  <span>${c.time}</span>
+                  <span class="face-conf">${conf}%</span>
+                </div>
+              </div>`;
+            card.onclick=()=>openFaceCard(c.lid,'Unknown',c.conf,c.time,c.fid);
+            grid.prepend(card);
+          }
+        });
+        // Remove cards that are no longer in live store (labeled/cleared)
+        const liveFids=new Set(lu.cards.map(c=>'u-'+c.fid));
+        grid.querySelectorAll('.face-card').forEach(c=>{
+          if(!liveFids.has(c.id)) c.remove();
+        });
+      });
+    }
+
+    // Log
+    if(curTab==='log'){
+      const el=document.getElementById('log-list');
+      if(!logCache.length){el.innerHTML='<div class="empty">No events yet</div>';return}
+      el.innerHTML=logCache.map((e,idx)=>{
+        const isUnk=e.name==='Unknown';
+        const conf=Math.round(e.confidence*100);
+        const lid=e.lid||idx;
+        return `<div class="logrow" onclick="openLogModal(${idx},'${lid}')">
+          <img class="lthumb" src="/api/log_thumb/${lid}"
+               onerror="this.style.background='var(--card)'"/>
+          <div class="lbody">
+            <div class="lname ${isUnk?'u':'k'}">${e.name}</div>
+            <div class="lmeta">${e.time}</div>
+          </div>
+          <div class="lconf">${conf}%</div>
+          <div class="larr">›</div>
+        </div>`;
+      }).join('');
+    }
+
+    // Enroll — person list
+    if(curTab==='enroll'){
+      fetch('/api/person_stats').then(r=>r.json()).then(ps=>{
+        const el=document.getElementById('known-list');
+        if(!ps.persons.length){el.innerHTML='<div class="empty">No persons enrolled yet</div>';return}
+        const maxE=Math.max(...ps.persons.map(p=>p.embeddings),1);
+        el.innerHTML=ps.persons.map(p=>{
+          const pct=Math.round((p.embeddings/maxE)*100);
+          const qc=p.embeddings>=12?'var(--green)':p.embeddings>=6?'var(--amber)':'var(--red)';
+          const ql=p.embeddings>=12?'Good':p.embeddings>=6?'Fair':'Low';
+          return `<div class="person">
+            <div class="ptop">
+              <div class="pdot" style="background:${qc}"></div>
+              <div class="pname">${p.name}</div>
+              <div class="pcnt">${p.embeddings}·<span style="color:${qc}">${ql}</span></div>
+              <button class="pdel" onclick="deletePerson('${p.name}')" title="Remove">✕</button>
+            </div>
+            <div class="pbarw"><div class="pbar" style="width:${pct}%;background:${qc}"></div></div>
+          </div>`;
+        }).join('');
+      });
+    }
+
+    // Label
+    if(curTab==='label'){
+      const el=document.getElementById('label-list');
+      if(!d.unknowns.length){el.innerHTML='<div class="empty">No unknown faces captured</div>';return}
+      d.unknowns.forEach(u=>{
+        if(!document.getElementById('uc-'+u.fid)){
+          const c=document.createElement('div');
+          c.className='ucard';c.id='uc-'+u.fid;
+          c.innerHTML=`
+            <img class="ucard-img" src="/api/unknown_crop/${u.fid}" loading="lazy"/>
+            <div class="umeta">${u.timestamp} · ${u.fid}</div>
+            <div class="urow">
+              <input id="ln-${u.fid}" type="text" placeholder="Enter name…"/>
+              <button class="btn-lbl" onclick="labelFace('${u.fid}')">Enroll</button>
+            </div>`;
+          el.prepend(c);
+        }
+      });
+    }
+
+  }).catch(()=>{});
+}
+
+function toast(msg,type=''){
+  const el=document.getElementById('toast');
+  el.textContent=msg;el.className='show '+(type||'');
+  setTimeout(()=>el.className='',2800);
+}
+
+// ── Detection Notification ─────────────────────────────────
+let _detFlashTimer = null;
+
+function pollDetection(){
+  fetch('/api/recent_detection').then(r=>r.json()).then(d=>{
+    if(!d.event) return;
+    const ev = d.event;
+    // Avoid re-flashing the same event
+    if(ev.lid === lastDetLid) return;
+    lastDetLid = ev.lid;
+    showDetectionCard(ev);
+  }).catch(()=>{});
+}
+
+function showDetectionCard(ev){
+  const isAuth = ev.authorized;
+  const color  = isAuth ? 'var(--green)' : 'var(--red)';
+  const color2 = isAuth ? 'var(--green2)' : 'var(--red)';
+  const conf   = Math.round(ev.confidence * 100);
+
+  // Face image
+  const img = document.getElementById('det-face-img');
+  if(ev.crop_b64){
+    img.src = 'data:image/jpeg;base64,'+ev.crop_b64;
+  } else {
+    img.src = '/api/log_thumb/'+ev.lid+'?t='+Date.now();
+  }
+
+  // Border colour on image wrap
+  document.getElementById('det-img-wrap').style.borderColor = color;
+
+  // Auth badge
+  const badge = document.getElementById('det-auth-badge');
+  badge.textContent  = isAuth ? '✓ AUTHORIZED' : '✗ UNAUTHORIZED';
+  badge.style.color  = isAuth ? '#1b5e20' : '#b71c1c';
+  badge.style.background = isAuth
+    ? 'rgba(76,175,80,.85)' : 'rgba(239,83,80,.85)';
+
+  // Name + status
+  const nameEl = document.getElementById('det-name');
+  nameEl.textContent  = isAuth ? ev.name : 'Unknown';
+  nameEl.style.color  = color2;
+
+  const stEl = document.getElementById('det-status');
+  stEl.textContent = isAuth ? '● ACCESS GRANTED' : '● ACCESS DENIED';
+  stEl.style.color = color;
+
+  // Confidence
+  document.getElementById('det-conf-lbl').textContent = conf+'%';
+  const bar = document.getElementById('det-conf-bar');
+  bar.style.width      = conf+'%';
+  bar.style.background = conf>=70?'var(--green)':conf>=45?'var(--amber)':'var(--red)';
+
+  // Time
+  document.getElementById('det-time').textContent = ev.time;
+
+  // Enroll row
+  const erow = document.getElementById('det-enroll-row');
+  erow.style.display = (!isAuth && ev.fid) ? 'flex' : 'none';
+  if(ev.fid) erow.dataset.fid = ev.fid;
+  document.getElementById('det-enroll-name').value = '';
+
+  // Show card, hide idle
+  document.getElementById('detect-idle').style.display = 'none';
+  const card = document.getElementById('detect-card');
+  card.classList.add('visible');
+
+  // Pulse rings
+  const pulse = document.getElementById('det-pulse');
+  pulse.style.display   = 'block';
+  pulse.style.color     = color;
+  if(_detFlashTimer) clearTimeout(_detFlashTimer);
+  _detFlashTimer = setTimeout(()=>{
+    pulse.style.display = 'none';
+  }, 3000);
+
+  // Toast notification
+  if(isAuth){
+    toast(`✓ ${ev.name} — ${conf}% confidence`, 'ok');
+  } else {
+    toast(`✗ Unknown face detected — ${conf}%`, 'err');
+  }
+}
+
+function enrollFromDetect(){
+  const row  = document.getElementById('det-enroll-row');
+  const fid  = row.dataset.fid;
+  const name = document.getElementById('det-enroll-name').value.trim();
+  if(!name){toast('Enter a name','err');return}
+  if(!fid){toast('No face ID','err');return}
+  fetch('/api/label_unknown',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({fid,name})}).then(r=>r.json()).then(d=>{
+    toast(d.msg, d.ok?'ok':'err');
+    if(d.ok) row.style.display='none';
+  });
+}
+
+// ── Clusters ───────────────────────────────────────────────
+function loadClusters(){
+  fetch('/api/clusters').then(r=>r.json()).then(d=>{
+    const list = document.getElementById('cluster-list');
+    document.getElementById('badge-clusters').textContent = d.clusters.length;
+    if(!d.clusters.length){
+      list.innerHTML='<div class="empty">No clusters yet — unknown faces will auto-group here</div>';
+      return;
+    }
+    list.innerHTML = d.clusters.map(c => {
+      const imgSrc = c.sample
+        ? `/api/cluster_image/${c.cid}/${c.sample}`
+        : '';
+      // Show up to 6 member thumbnails
+      const thumbs = c.members.slice(0,6).map(fid =>
+        `<img src="/api/cluster_image/${c.cid}/${fid}"
+              onerror="this.style.opacity='.2'" loading="lazy"/>`
+      ).join('');
+      return `<div class="clu-card" id="clu-${c.cid}">
+        <img class="clu-thumb" src="${imgSrc}" onerror="this.style.opacity='.2'"/>
+        <div class="clu-info">
+          <div class="clu-id">ID: ${c.cid}</div>
+          <div class="clu-cnt">${c.unlabeled} unlabeled / ${c.count} total faces</div>
+          <div class="clu-members">${thumbs}</div>
+          <div class="clu-lbl-row">
+            <input id="clu-name-${c.cid}" type="text" placeholder="Name for this person…"/>
+            <button class="btn-clu" onclick="labelCluster('${c.cid}')">Enroll All</button>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+  });
+}
+
+function labelCluster(cid){
+  const name = document.getElementById('clu-name-'+cid).value.trim();
+  if(!name){toast('Enter a name first','err');return}
+  if(!confirm(`Enroll all faces in cluster "${cid}" as "${name}"?`)) return;
+  fetch('/api/label_cluster',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({cid,name})}).then(r=>r.json()).then(d=>{
+    toast(d.msg, d.ok?'ok':'err');
+    if(d.ok){
+      document.getElementById('clu-'+cid)?.remove();
+      loadClusters();
+    }
+  });
+}
+
+setInterval(pollDetection, 1500);   // fast poll for notifications
+setInterval(poll, 2000);
+poll();
+</script>
+</body>
+</html>

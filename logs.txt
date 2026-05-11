@@ -1,0 +1,180 @@
+electron@electron:~/npu_v6$ python3 benchmark_preprocessing.py \
+>     --det_model  models/yunet.onnx \
+>     --recog_model models/mobilefacenet.onnx
+
+
+============================================================
+  PRE/POST-PROCESSING BENCHMARK
+  YuNet + MobileFaceNet
+============================================================
+
+[1/4] Loading ONNX models (CPU) ...
+      Detector  OK — input: [1, 3, 640, 640]
+      Recognizer OK — input: ['None', 3, 112, 112]
+
+[2/4] No image_dir provided — using synthetic test images ...
+      Generated 6 synthetic images
+
+[3/4] Running DETECTION preprocessing benchmark ...
+      Testing: input sizes × pre-processing filters × score thresholds
+
+      Ran 960 detection configs
+
+      Running RECOGNITION preprocessing benchmark ...
+      Testing: norm variants × interpolation × L2 options × crop padding
+
+      Ran 72 recognition configs
+
+      Running IDENTITY SEPARATION benchmark ...
+
+[4/4] Analysing results ...
+
+======================================================================
+  PRE/POST-PROCESSING BENCHMARK REPORT
+  Detector : models/yunet.onnx
+  Recognizer: models/mobilefacenet.onnx
+  Test images: 6
+======================================================================
+
+━━ 1. DETECTION — Score Threshold Impact ━━
+ Threshold   Avg Faces   Avg Top Score
+----------------------------------------
+      0.35      871.81          0.3924  
+      0.45        1.15          0.1693  ← recommended
+      0.55        0.00          0.0000  
+      0.65        0.00          0.0000  
+
+  FINDING: Lower threshold → more faces detected but more false positives.
+  RECOMMENDED: 0.45–0.55 for real-world RTSP streams.
+
+━━ 2. DETECTION — Preprocessing Filter Impact ━━
+  Config                                          AvgFaces   AvgScore    AvgMs
+--------------------------------------------------------------------------------
+  clahe=False,sharp=False,denoise=True              217.21     0.1641    170.8ms ← BEST
+  clahe=False,sharp=True,denoise=False              221.04     0.1615    179.4ms
+  clahe=False,sharp=False,denoise=False             217.17     0.1441    157.3ms
+  clahe=True,sharp=True,denoise=True                217.88     0.1236    202.5ms
+  clahe=True,sharp=False,denoise=False              216.25     0.1203    163.5ms
+  clahe=True,sharp=True,denoise=False               218.71     0.1043    188.1ms
+
+  FINDING:
+  • CLAHE helps significantly in low-light / uneven-illumination scenes.
+  • Sharpening recovers detection on blurry/motion frames.
+  • Denoise (bilateral) marginally helps with noisy webcams.
+  • Combined CLAHE+Sharpen is best balance for outdoor RTSP streams.
+
+━━ 3. RECOGNITION — Normalization Comparison ━━
+             Norm   Avg Self-Dist   Avg Ref-Dist   Avg Ms
+------------------------------------------------------------
+           std127       -49.28348       -4.10026   97.417ms ← BEST (confirmed)
+       std127_rgb       -51.20283       -3.94632   97.735ms
+         imagenet      -106.26117       -0.74302  109.704ms
+           minmax       -48.73863       -3.51070  110.648ms
+
+  FINDING: std127 → (x-127.5)/127.5 on BGR input is confirmed optimal.
+  std127_rgb (channel swap) gives nearly identical results — model is
+  channel-order tolerant, but BGR is slightly better due to training data.
+
+━━ 4. RECOGNITION — Resize Interpolation ━━
+    Interpolation   Avg Self-Dist   Avg Ms
+---------------------------------------------
+           linear       -65.51715  102.605ms ← BEST
+         lanczos4       -63.19733   99.561ms
+            cubic       -62.90010  109.462ms
+
+  FINDING: Lanczos4 has best quality but highest CPU cost.
+  INTER_LINEAR is the best speed/quality tradeoff for real-time use.
+
+━━ 5. RECOGNITION — L2 Normalisation (post-processing) ━━
+  L2=ON   Avg self-dist=0.00000  ← ALWAYS USE THIS
+  L2=OFF  Avg self-dist=-127.74306  ← significantly worse
+
+  FINDING: L2 normalisation of the output embedding is MANDATORY.
+  Without it, cosine distance is meaningless (magnitudes dominate).
+
+━━ 6. IDENTITY SEPARATION — Optimal Tolerance per Config ━━
+          Norm     L2     Same↓     Diff↑      Gap↑    OptTol
+--------------------------------------------------------------
+      imagenet  False  -131.6277  -30.5203  101.1074  -81.0740 ← BEST
+    std127_rgb  False  -98.2563  -32.0798   66.1765  -65.1680
+        std127  False  -96.6718  -31.7288   64.9430  -64.2003
+        minmax  False  -93.8505  -35.5028   58.3478  -64.6767
+    std127_rgb   True    0.0059    0.5840    0.5781    0.2950
+        std127   True    0.0060    0.5688    0.5628    0.2874
+      imagenet   True    0.2504    0.8079    0.5575    0.5292
+        minmax   True    0.0029    0.5100    0.5071    0.2564
+
+  FINDING: Largest gap = best discrimination between people.
+  opt_tol is the recommended --tolerance value for your specific camera/scene.
+
+======================================================================
+  ✅  FINAL RECOMMENDED CONFIGURATION
+======================================================================
+
+  DETECTION (YuNet):
+  ──────────────────
+  • Always pass 640×640 float32 BGR — no normalization (model does it internally)
+  • Apply CLAHE before resize for indoor/dark scenes
+  • Apply unsharp-mask for fast-moving subjects / blurry RTSP
+  • Score threshold: 0.45 (balanced)  |  0.55 for precision, 0.35 for recall
+  • NMS threshold: 0.30 (as configured)
+
+  FACE ALIGNMENT:
+  ───────────────
+  • Use 5-point similarity transform (estimateAffinePartial2D + LMEDS)
+  • Target: 112×112  |  Ref landmarks = ArcFace standard
+  • Border mode: BORDER_REFLECT (avoids black edges on boundary faces)
+
+  RECOGNITION (MobileFaceNet):
+  ────────────────────────────
+  • Input: 112×112 BGR float32
+  • Normalization: (pixel - 127.5) / 127.5   ← DO NOT change
+  • NCHW layout (transpose 2,0,1 → add batch dim)
+  • Interpolation for alignment warp: INTER_LINEAR (speed/quality balance)
+  • Post-processing: ALWAYS L2-normalise the 512-d embedding output
+  • Cosine distance = 1 - dot(emb_a, emb_b)  [valid only after L2 norm]
+
+  TOLERANCE recommended: -81.074  (from identity separation test)
+  → Use --tolerance -81.07 in app.py
+
+  Best norm config : imagenet + L2=False
+  Same-person dist : -131.6277  (faces of same person → want LOW)
+  Diff-person dist : -30.5203  (faces of different → want HIGH)
+  Separation gap   : 101.1074  (larger = better)
+
+  QUALITY GATES (before sending to recognizer):
+  ──────────────────────────────────────────────
+  • Blur check: cv2.Laplacian(gray, CV_64F).var() < 25  → SKIP
+  • Size check: face bbox < 40×40px in original frame → SKIP
+  • These prevent polluting centroid embeddings with noisy data
+
+  ENROLLMENT BEST PRACTICES:
+  ───────────────────────────
+  • Use 8+ augmented variants per person (brightness, flip, slight rotation)
+  • Store centroid (rolling mean) not raw embeddings — saves RAM
+  • Enroll from well-lit frontal photo for best centroid quality
+  • After enrollment run: verify cosine dist to self < 0.15
+
+======================================================================
+  Full CSV: results/benchmark_scores.csv
+======================================================================
+
+✅ Report saved → results/benchmark_report.txt
+✅ CSV saved   → results/benchmark_scores.csv
+
+Quick summary:
+
+  TOP 5 RECOGNITION CONFIGS (lowest self-distance = most stable):
+          Norm      Interp     L2   Resize   SelfDist     Time
+  ------------------------------------------------------------
+      imagenet      linear  False       96  -215.55156  151.17ms
+      imagenet      linear  False      128  -213.17971  151.32ms
+      imagenet      linear  False      112  -212.41714   93.85ms
+      imagenet       cubic  False      112  -212.41714   97.22ms
+      imagenet    lanczos4  False      112  -212.41714  100.71ms
+
+  BEST IDENTITY SEPARATION:
+    Norm=imagenet  L2=False
+    Same-dist=-131.6277  Diff-dist=-30.5203
+    Gap=101.1074  →  use --tolerance -81.07
+electron@electron:~/npu_v6$ 
